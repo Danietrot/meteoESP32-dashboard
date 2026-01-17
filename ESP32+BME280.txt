@@ -1,5 +1,5 @@
 /*
- * ESP32 Stazione Meteo Standalone + Web Server
+ * ESP32 Stazione Meteo Standalone + Web Server + OTA
  * VERSIONE BME280 (unico sensore)
  * 
  * Hardware:
@@ -7,7 +7,17 @@
  * - BME280 (0x76 o 0x77) → Temperatura + Umidità + Pressione
  * 
  * Web Server: http://192.168.1.101
+ * OTA Update: http://192.168.1.101/update
+ * 
+ * Credenziali OTA Web:
+ * Username: admin
+ * Password: meteo2026
  */
+
+// ================== VERSIONE SOFTWARE ==================
+#define FIRMWARE_VERSION "1.0.0"
+#define BUILD_DATE __DATE__
+#define BUILD_TIME __TIME__
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -16,6 +26,8 @@
 #include <Preferences.h>
 #include <time.h>
 #include <Adafruit_BME280.h>
+#include <ArduinoOTA.h>
+#include <Update.h>
 
 // ================== CONFIGURAZIONE ==================
 
@@ -27,6 +39,14 @@ IPAddress local_IP(192, 168, 1, 101);
 IPAddress gateway(192, 168, 1, 1);
 IPAddress subnet(255, 255, 255, 0);
 IPAddress dns(192, 168, 1, 1);
+
+// ---- OTA ----
+const char* OTA_HOSTNAME = "ESP32-Meteo-BME280";
+const char* OTA_PASSWORD = "meteo2026";      // Password per Arduino IDE OTA
+
+// ---- Autenticazione Web OTA ----
+const char* OTA_WEB_USER = "admin";          // Username pagina web
+const char* OTA_WEB_PASS = "meteo2026";      // Password pagina web
 
 // ---- ThingSpeak ----
 const char* THINGSPEAK_URL = "http://api.thingspeak.com/update";
@@ -268,6 +288,42 @@ String makePackedRecord(const struct tm &t, float temp, float hum, float press, 
   return compact + ";" + String(t100) + ";" + String(h100) + ";" + String(p100) + ";" + String(tcpu100);
 }
 
+// ================== OTA UPDATE ==================
+
+void setupOTA() {
+  // Hostname con versione
+  String hostname = String(OTA_HOSTNAME) + "-v" + String(FIRMWARE_VERSION);
+  ArduinoOTA.setHostname(hostname.c_str());
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+  
+  ArduinoOTA.onStart([]() {
+    String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
+    Serial.println("[OTA] Inizio aggiornamento " + type);
+  });
+  
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\n[OTA] ✅ Aggiornamento completato!");
+  });
+  
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("[OTA] Progresso: %u%%\r", (progress / (total / 100)));
+  });
+  
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("[OTA] ❌ Errore[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  });
+  
+  ArduinoOTA.begin();
+  Serial.println("[OTA] ✅ OTA inizializzato");
+  Serial.println("[OTA] Hostname: " + hostname);
+  Serial.println("[OTA] Password: ****");
+}
+
 // ================== WEB SERVER ==================
 
 void handleRoot() {
@@ -292,10 +348,25 @@ void handleRoot() {
   html += "th,td{padding:10px;text-align:left;border-bottom:1px solid #bdc3c7;}";
   html += "th{background:#3498db;color:white;}";
   html += ".footer{text-align:center;margin-top:30px;color:#7f8c8d;font-size:12px;}";
+  html += ".btn{display:inline-block;padding:10px 20px;margin:10px 5px;background:#3498db;color:white;text-decoration:none;border-radius:5px;}";
+  html += ".btn:hover{background:#2980b9;}";
+  html += ".version-badge{background:#3498db;color:white;padding:5px 15px;border-radius:20px;font-size:12px;}";
   html += "</style></head><body>";
   
   html += "<div class='container'>";
   html += "<h1>🌤️ Stazione Meteo ESP32 BME280</h1>";
+  
+  // Badge versione firmware
+  html += "<div style='text-align:center;margin:10px 0;'>";
+  html += "<span class='version-badge'>";
+  html += "Firmware v" + String(FIRMWARE_VERSION) + " | Compilato: " + String(BUILD_DATE) + " " + String(BUILD_TIME);
+  html += "</span>";
+  html += "</div>";
+  
+  // Pulsante OTA
+  html += "<div style='text-align:center;margin:20px 0;'>";
+  html += "<a href='/update' class='btn'>🔄 Aggiorna Firmware</a>";
+  html += "</div>";
   
   // Stato sistema
   html += "<h2>📊 Stato Sistema</h2>";
@@ -362,7 +433,7 @@ void handleRoot() {
   html += "<p>Prossimo invio tra: <strong>~" + String(secondsLeft) + " secondi</strong></p>";
   
   html += "<div class='footer'>";
-  html += "ESP32 + BME280 - Auto-refresh ogni 5 secondi";
+  html += "ESP32 + BME280 + OTA - Auto-refresh ogni 5 secondi";
   html += "</div>";
   
   html += "</div></body></html>";
@@ -370,10 +441,122 @@ void handleRoot() {
   server.send(200, "text/html", html);
 }
 
+void handleUpdate() {
+  // Richiedi autenticazione
+  if (!server.authenticate(OTA_WEB_USER, OTA_WEB_PASS)) {
+    return server.requestAuthentication();
+  }
+  
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta charset='UTF-8'>";
+  html += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
+  html += "<title>OTA Update</title>";
+  html += "<style>";
+  html += "body{font-family:Arial,sans-serif;margin:40px;background:#f0f0f0;text-align:center;}";
+  html += ".container{max-width:600px;margin:0 auto;background:white;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);}";
+  html += "h1{color:#2c3e50;}";
+  html += "form{margin-top:30px;}";
+  html += "input[type=file]{padding:10px;margin:20px 0;border:2px dashed #3498db;border-radius:5px;width:100%;}";
+  html += "input[type=submit]{padding:15px 40px;background:#27ae60;color:white;border:none;border-radius:5px;cursor:pointer;font-size:16px;}";
+  html += "input[type=submit]:hover{background:#229954;}";
+  html += ".warning{background:#fff3cd;padding:15px;border-radius:5px;margin:20px 0;color:#856404;}";
+  html += ".back{margin-top:20px;display:inline-block;padding:10px 20px;background:#95a5a6;color:white;text-decoration:none;border-radius:5px;}";
+  html += ".info{background:#d1ecf1;padding:15px;border-radius:5px;margin:20px 0;color:#0c5460;}";
+  html += "#progress{width:100%;height:30px;background:#ecf0f1;border-radius:15px;margin-top:20px;display:none;}";
+  html += "#bar{height:100%;background:#27ae60;border-radius:15px;width:0%;text-align:center;line-height:30px;color:white;font-weight:bold;}";
+  html += "</style>";
+  html += "<script>";
+  html += "function uploadFile(){";
+  html += "var file=document.getElementById('file').files[0];";
+  html += "if(!file){alert('Seleziona un file!');return;}";
+  html += "var formData=new FormData();formData.append('file',file);";
+  html += "document.getElementById('progress').style.display='block';";
+  html += "var xhr=new XMLHttpRequest();";
+  html += "xhr.upload.addEventListener('progress',function(e){";
+  html += "var percent=(e.loaded/e.total)*100;";
+  html += "document.getElementById('bar').style.width=percent+'%';";
+  html += "document.getElementById('bar').innerHTML=Math.round(percent)+'%';";
+  html += "},false);";
+  html += "xhr.addEventListener('load',function(e){";
+  html += "document.getElementById('bar').innerHTML='✅ Completato! Riavvio...';";
+  html += "setTimeout(function(){window.location.href='/';},5000);";
+  html += "},false);";
+  html += "xhr.addEventListener('error',function(e){";
+  html += "document.getElementById('bar').innerHTML='❌ Errore!';";
+  html += "document.getElementById('bar').style.background='#e74c3c';";
+  html += "},false);";
+  html += "xhr.open('POST','/upload');";
+  html += "xhr.send(formData);";
+  html += "}";
+  html += "</script>";
+  html += "</head><body>";
+  html += "<div class='container'>";
+  html += "<h1>🔄 Aggiornamento Firmware OTA</h1>";
+  
+  // Info versione corrente
+  html += "<div class='info'>";
+  html += "📌 <strong>Versione corrente:</strong> v" + String(FIRMWARE_VERSION);
+  html += "<br>🕒 <strong>Compilato:</strong> " + String(BUILD_DATE) + " " + String(BUILD_TIME);
+  html += "</div>";
+  
+  html += "<div class='warning'>";
+  html += "⚠️ <strong>Attenzione:</strong> Non scollegare l'ESP32 durante l'aggiornamento!";
+  html += "</div>";
+  html += "<form>";
+  html += "<input type='file' id='file' accept='.bin'>";
+  html += "<br><input type='button' value='Carica Firmware' onclick='uploadFile()'>";
+  html += "</form>";
+  html += "<div id='progress'><div id='bar'>0%</div></div>";
+  html += "<a href='/' class='back'>← Torna alla Dashboard</a>";
+  html += "</div></body></html>";
+  
+  server.send(200, "text/html", html);
+}
+
+void handleUpload() {
+  // Verifica autenticazione
+  if (!server.authenticate(OTA_WEB_USER, OTA_WEB_PASS)) {
+    return;
+  }
+  
+  HTTPUpload& upload = server.upload();
+  
+  if (upload.status == UPLOAD_FILE_START) {
+    Serial.printf("[OTA] Upload Start: %s\n", upload.filename.c_str());
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      Serial.printf("[OTA] ✅ Upload completato: %u bytes\n", upload.totalSize);
+    } else {
+      Update.printError(Serial);
+    }
+  }
+}
+
+void handleUploadDone() {
+  // Verifica autenticazione
+  if (!server.authenticate(OTA_WEB_USER, OTA_WEB_PASS)) {
+    return;
+  }
+  
+  server.send(200, "text/plain", "OK");
+  delay(1000);
+  ESP.restart();
+}
+
 void setupWebServer() {
   server.on("/", handleRoot);
+  server.on("/update", HTTP_GET, handleUpdate);
+  server.on("/upload", HTTP_POST, handleUploadDone, handleUpload);
   server.begin();
   Serial.println("[WEB] Server avviato su http://192.168.1.101");
+  Serial.println("[WEB] OTA Update: http://192.168.1.101/update");
 }
 
 // ================== SETUP ==================
@@ -383,7 +566,14 @@ void setup() {
   delay(2000);
   
   Serial.println("\n========================================");
-  Serial.println("  ESP32 Stazione Meteo BME280");
+  Serial.println("  ESP32 Stazione Meteo BME280 + OTA");
+  Serial.println("========================================");
+  Serial.print("  Firmware: v");
+  Serial.println(FIRMWARE_VERSION);
+  Serial.print("  Compilato: ");
+  Serial.print(BUILD_DATE);
+  Serial.print(" ");
+  Serial.println(BUILD_TIME);
   Serial.println("========================================\n");
   
   Wire.begin(SDA_PIN, SCL_PIN);
@@ -433,6 +623,9 @@ void setup() {
     Serial.print("[SETUP] ✅ WiFi → ");
     Serial.println(WiFi.localIP());
     
+    // Inizializza OTA
+    setupOTA();
+    
     Serial.println("[SETUP] Sincronizzazione NTP...");
     configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
     
@@ -472,6 +665,9 @@ void setup() {
 // ================== LOOP ==================
 
 void loop() {
+  // Gestisci OTA
+  ArduinoOTA.handle();
+  
   server.handleClient();
   
   if (WiFi.status() != WL_CONNECTED) {
