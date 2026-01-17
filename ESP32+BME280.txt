@@ -6,8 +6,8 @@
  * - ESP32 DevKitC (ESP32-WROOM-32U)
  * - BME280 (0x76 o 0x77) → Temperatura + Umidità + Pressione
  * 
- * Web Server: http://192.168.1.101
- * OTA Update: http://192.168.1.101/update
+ * Web Server: http://192.168.0.101
+ * OTA Update: http://192.168.0.101/update
  * 
  * Credenziali OTA Web:
  * Username: admin
@@ -35,10 +35,10 @@
 const char* ssid     = "SmartHome_loT";
 const char* password = "60342270";
 
-IPAddress local_IP(192, 168, 1, 101);
-IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 255, 0);
-IPAddress dns(192, 168, 1, 1);
+IPAddress local_IP(192, 168, 0, 101);    // ← 192.168.0.101
+IPAddress gateway(192, 168, 0, 1);       // ← 192.168.0.1
+IPAddress subnet(255, 255, 255, 0);      // OK (invariato)
+IPAddress dns(192, 168, 0, 1);           // ← 192.168.0.1
 
 // ---- OTA ----
 const char* OTA_HOSTNAME = "ESP32-Meteo-BME280";
@@ -555,8 +555,8 @@ void setupWebServer() {
   server.on("/update", HTTP_GET, handleUpdate);
   server.on("/upload", HTTP_POST, handleUploadDone, handleUpload);
   server.begin();
-  Serial.println("[WEB] Server avviato su http://192.168.1.101");
-  Serial.println("[WEB] OTA Update: http://192.168.1.101/update");
+  Serial.println("[WEB] Server avviato su http://192.168.0.101");
+  Serial.println("[WEB] OTA Update: http://192.168.0.101/update");
 }
 
 // ================== SETUP ==================
