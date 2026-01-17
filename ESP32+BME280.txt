@@ -1,0 +1,581 @@
+/*
+ * ESP32 Stazione Meteo Standalone + Web Server
+ * VERSIONE BME280 (unico sensore)
+ * 
+ * Hardware:
+ * - ESP32 DevKitC (ESP32-WROOM-32U)
+ * - BME280 (0x76 o 0x77) → Temperatura + Umidità + Pressione
+ * 
+ * Web Server: http://192.168.1.101
+ */
+
+#include <WiFi.h>
+#include <WebServer.h>
+#include <HTTPClient.h>
+#include <Wire.h>
+#include <Preferences.h>
+#include <time.h>
+#include <Adafruit_BME280.h>
+
+// ================== CONFIGURAZIONE ==================
+
+// ---- WiFi ----
+const char* ssid     = "SmartHome_loT";
+const char* password = "60342270";
+
+IPAddress local_IP(192, 168, 1, 101);
+IPAddress gateway(192, 168, 1, 1);
+IPAddress subnet(255, 255, 255, 0);
+IPAddress dns(192, 168, 1, 1);
+
+// ---- ThingSpeak ----
+const char* THINGSPEAK_URL = "http://api.thingspeak.com/update";
+const char* THINGSPEAK_API_KEY = "YV2B9WJ122B7YPOX";
+const char* THINGSPEAK_CHANNEL = "3230363";
+
+// ---- Sensori I2C ----
+#define SDA_PIN 21
+#define SCL_PIN 22
+#define BME280_ADDRESS 0x76  // Oppure 0x77 se necessario
+
+// ---- NTP ----
+const char* NTP_SERVER = "pool.ntp.org";
+const long  GMT_OFFSET_SEC = 3600;
+const int   DAYLIGHT_OFFSET_SEC = 0;
+
+// ---- NVS ----
+Preferences prefs;
+const char* NVS_NAMESPACE = "meteo";
+const char* NVS_KEY_QUEUE = "queue";
+const size_t MAX_QUEUE_CHARS = 2000;
+
+// ---- Timing ----
+const unsigned long SAMPLE_INTERVAL_MS = 30UL * 1000UL;
+const int NUM_SAMPLES_PER_WINDOW = 10;
+
+// ================== OGGETTI GLOBALI ==================
+
+Adafruit_BME280 bme;
+WebServer server(80);
+
+float sumTemp = 0.0;
+float sumHum = 0.0;
+float sumPress = 0.0;
+float sumTempCPU = 0.0;
+int sampleCount = 0;
+unsigned long lastSampleMs = 0;
+
+bool ntpSynced = false;
+
+// Statistiche
+unsigned long totalSent = 0;
+unsigned long totalFailed = 0;
+String lastSentTime = "N/A";
+String lastError = "Nessuno";
+
+// Ultimi valori
+float lastTemp = 0.0;
+float lastHum = 0.0;
+float lastPress = 0.0;
+float lastTempCPU = 0.0;
+
+// ================== FUNZIONI SENSORI ==================
+
+bool readBME280(float &temperature, float &humidity, float &pressure) {
+  temperature = bme.readTemperature();
+  humidity = bme.readHumidity();
+  pressure = bme.readPressure() / 100.0F; // Pa → hPa
+  
+  // Verifica valori ragionevoli
+  if (isnan(temperature) || isnan(humidity) || isnan(pressure)) return false;
+  if (temperature < -40 || temperature > 85) return false;
+  if (humidity < 0 || humidity > 100) return false;
+  if (pressure < 300 || pressure > 1100) return false;
+  
+  return true;
+}
+
+float readCPUTemperature() {
+  return temperatureRead();
+}
+
+// ================== GESTIONE TIMESTAMP ==================
+
+bool getCurrentTime(struct tm &timeinfo) {
+  if (!ntpSynced) return false;
+  
+  time_t now = time(nullptr);
+  if (now < 10) return false;
+  
+  localtime_r(&now, &timeinfo);
+  if (timeinfo.tm_year + 1900 < 2020) return false;
+  
+  return true;
+}
+
+void roundTo5MinutesDown(struct tm &t) {
+  t.tm_min = (t.tm_min / 5) * 5;
+  t.tm_sec = 0;
+}
+
+String makeIsoTimestamp(const struct tm &t) {
+  char buf[30];
+  snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d+01:00",
+           t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+           t.tm_hour, t.tm_min, t.tm_sec);
+  return String(buf);
+}
+
+String makeCompactTimestamp(const struct tm &t) {
+  char buf[20];
+  snprintf(buf, sizeof(buf), "%04d%02d%02d%02d%02d%02d",
+           t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+           t.tm_hour, t.tm_min, t.tm_sec);
+  return String(buf);
+}
+
+String compactToIso(const String &compact) {
+  if (compact.length() < 14) return "";
+  String y = compact.substring(0, 4);
+  String m = compact.substring(4, 6);
+  String d = compact.substring(6, 8);
+  String H = compact.substring(8, 10);
+  String M = compact.substring(10, 12);
+  String S = compact.substring(12, 14);
+  return y + "-" + m + "-" + d + "T" + H + ":" + M + ":" + S + "+01:00";
+}
+
+// ================== NVS QUEUE ==================
+
+void appendToQueue(const String &record) {
+  prefs.begin(NVS_NAMESPACE, false);
+  String q = prefs.getString(NVS_KEY_QUEUE, "");
+  while (q.length() > MAX_QUEUE_CHARS) {
+    int pos = q.indexOf('\n');
+    if (pos < 0) { q = ""; break; }
+    q = q.substring(pos + 1);
+  }
+  if (q.length() > 0) q += "\n";
+  q += record;
+  prefs.putString(NVS_KEY_QUEUE, q);
+  prefs.end();
+}
+
+bool peekQueue(String &record) {
+  prefs.begin(NVS_NAMESPACE, true);
+  String q = prefs.getString(NVS_KEY_QUEUE, "");
+  prefs.end();
+  if (q.length() == 0) return false;
+  int pos = q.indexOf('\n');
+  record = (pos < 0) ? q : q.substring(0, pos);
+  return true;
+}
+
+void dropQueueHead() {
+  prefs.begin(NVS_NAMESPACE, false);
+  String q = prefs.getString(NVS_KEY_QUEUE, "");
+  if (q.length() == 0) { prefs.end(); return; }
+  int pos = q.indexOf('\n');
+  q = (pos < 0) ? "" : q.substring(pos + 1);
+  prefs.putString(NVS_KEY_QUEUE, q);
+  prefs.end();
+}
+
+int getQueueSize() {
+  prefs.begin(NVS_NAMESPACE, true);
+  String q = prefs.getString(NVS_KEY_QUEUE, "");
+  prefs.end();
+  if (q.length() == 0) return 0;
+  int count = 1;
+  for (int i = 0; i < q.length(); i++) {
+    if (q.charAt(i) == '\n') count++;
+  }
+  return count;
+}
+
+// ================== THINGSPEAK ==================
+
+bool sendToThingSpeak(const String &ts_iso, float temp, float hum, float press, float tempCPU) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  
+  WiFiClient client;
+  HTTPClient http;
+  if (!http.begin(client, THINGSPEAK_URL)) return false;
+  
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  
+  String payload = "api_key=" + String(THINGSPEAK_API_KEY);
+  payload += "&field1=" + String(temp, 2);
+  payload += "&field2=" + String(hum, 2);
+  payload += "&field3=" + String(press, 2);
+  payload += "&field4=" + String(tempCPU, 2);
+  payload += "&created_at=" + ts_iso;
+  
+  int code = http.POST(payload);
+  String resp = http.getString();
+  http.end();
+  
+  if (code == 200 && (resp.toInt() > 0 || resp == "0")) {
+    totalSent++;
+    lastSentTime = ts_iso;
+    return true;
+  }
+  
+  totalFailed++;
+  lastError = "HTTP " + String(code);
+  return false;
+}
+
+bool sendRecordFromQueue(const String &record) {
+  int p1 = record.indexOf(';');
+  int p2 = (p1 >= 0) ? record.indexOf(';', p1 + 1) : -1;
+  int p3 = (p2 >= 0) ? record.indexOf(';', p2 + 1) : -1;
+  int p4 = (p3 >= 0) ? record.indexOf(';', p3 + 1) : -1;
+  
+  if (p1 < 0 || p2 < 0 || p3 < 0) return true;
+  
+  String ts_compact = record.substring(0, p1);
+  String ts_iso = compactToIso(ts_compact);
+  if (ts_iso.length() == 0) return true;
+  
+  float temp = record.substring(p1 + 1, p2).toInt() / 100.0;
+  float hum = record.substring(p2 + 1, p3).toInt() / 100.0;
+  float press = record.substring(p3 + 1, p4).toInt() / 100.0;
+  float tempCPU = (p4 >= 0) ? record.substring(p4 + 1).toInt() / 100.0 : 0;
+  
+  return sendToThingSpeak(ts_iso, temp, hum, press, tempCPU);
+}
+
+void flushQueue() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  String rec;
+  if (!peekQueue(rec)) return;
+  
+  Serial.println("[NVS] Flush coda...");
+  while (peekQueue(rec)) {
+    if (!sendRecordFromQueue(rec)) break;
+    dropQueueHead();
+    delay(200);
+  }
+}
+
+String makePackedRecord(const struct tm &t, float temp, float hum, float press, float tempCPU) {
+  String compact = makeCompactTimestamp(t);
+  int t100 = (int)roundf(temp * 100.0);
+  int h100 = (int)roundf(hum * 100.0);
+  int p100 = (int)roundf(press * 100.0);
+  int tcpu100 = (int)roundf(tempCPU * 100.0);
+  return compact + ";" + String(t100) + ";" + String(h100) + ";" + String(p100) + ";" + String(tcpu100);
+}
+
+// ================== WEB SERVER ==================
+
+void handleRoot() {
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta charset='UTF-8'>";
+  html += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
+  html += "<meta http-equiv='refresh' content='5'>";
+  html += "<title>Stazione Meteo ESP32</title>";
+  html += "<style>";
+  html += "body{font-family:Arial,sans-serif;margin:20px;background:#f0f0f0;}";
+  html += ".container{max-width:800px;margin:0 auto;background:white;padding:20px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);}";
+  html += "h1{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:10px;}";
+  html += "h2{color:#34495e;margin-top:30px;}";
+  html += ".status{display:flex;justify-content:space-between;flex-wrap:wrap;}";
+  html += ".card{background:#ecf0f1;padding:15px;margin:10px;border-radius:5px;flex:1;min-width:200px;}";
+  html += ".card h3{margin:0 0 10px 0;color:#2980b9;}";
+  html += ".value{font-size:24px;font-weight:bold;color:#27ae60;}";
+  html += ".error{color:#e74c3c;}";
+  html += ".ok{color:#27ae60;}";
+  html += ".warning{color:#f39c12;}";
+  html += "table{width:100%;border-collapse:collapse;margin-top:20px;}";
+  html += "th,td{padding:10px;text-align:left;border-bottom:1px solid #bdc3c7;}";
+  html += "th{background:#3498db;color:white;}";
+  html += ".footer{text-align:center;margin-top:30px;color:#7f8c8d;font-size:12px;}";
+  html += "</style></head><body>";
+  
+  html += "<div class='container'>";
+  html += "<h1>🌤️ Stazione Meteo ESP32 BME280</h1>";
+  
+  // Stato sistema
+  html += "<h2>📊 Stato Sistema</h2>";
+  html += "<div class='status'>";
+  
+  html += "<div class='card'>";
+  html += "<h3>WiFi</h3>";
+  if (WiFi.status() == WL_CONNECTED) {
+    html += "<p class='ok'>✅ Connesso</p>";
+    html += "<p>IP: " + WiFi.localIP().toString() + "</p>";
+    html += "<p>RSSI: " + String(WiFi.RSSI()) + " dBm</p>";
+  } else {
+    html += "<p class='error'>❌ Disconnesso</p>";
+  }
+  html += "</div>";
+  
+  html += "<div class='card'>";
+  html += "<h3>NTP</h3>";
+  if (ntpSynced) {
+    html += "<p class='ok'>✅ Sincronizzato</p>";
+    struct tm tinfo;
+    if (getCurrentTime(tinfo)) {
+      html += "<p>" + makeIsoTimestamp(tinfo) + "</p>";
+    }
+  } else {
+    html += "<p class='error'>❌ Non sincronizzato</p>";
+  }
+  html += "</div>";
+  
+  html += "<div class='card'>";
+  html += "<h3>ThingSpeak</h3>";
+  html += "<p>Inviati: <span class='ok'>" + String(totalSent) + "</span></p>";
+  html += "<p>Falliti: <span class='error'>" + String(totalFailed) + "</span></p>";
+  html += "<p>Ultimo: " + lastSentTime + "</p>";
+  html += "</div>";
+  
+  html += "<div class='card'>";
+  html += "<h3>Coda NVS</h3>";
+  int qSize = getQueueSize();
+  if (qSize == 0) {
+    html += "<p class='ok'>✅ Vuota</p>";
+  } else {
+    html += "<p class='warning'>⚠️ " + String(qSize) + " elementi</p>";
+  }
+  html += "</div>";
+  
+  html += "</div>"; // fine status
+  
+  // Sensori
+  html += "<h2>🌡️ Sensore BME280</h2>";
+  html += "<table>";
+  html += "<tr><th>Parametro</th><th>Valore</th></tr>";
+  html += "<tr><td>Temperatura</td><td class='value'>" + String(lastTemp, 2) + " °C</td></tr>";
+  html += "<tr><td>Umidità</td><td class='value'>" + String(lastHum, 2) + " %</td></tr>";
+  html += "<tr><td>Pressione</td><td class='value'>" + String(lastPress, 2) + " hPa</td></tr>";
+  html += "<tr><td>Temperatura CPU</td><td class='value'>" + String(lastTempCPU, 2) + " °C</td></tr>";
+  html += "</table>";
+  
+  // Prossimo invio
+  html += "<h2>⏱️ Acquisizione Dati</h2>";
+  html += "<p>Campioni raccolti: <strong>" + String(sampleCount) + "/" + String(NUM_SAMPLES_PER_WINDOW) + "</strong></p>";
+  int remaining = NUM_SAMPLES_PER_WINDOW - sampleCount;
+  int secondsLeft = remaining * (SAMPLE_INTERVAL_MS / 1000);
+  html += "<p>Prossimo invio tra: <strong>~" + String(secondsLeft) + " secondi</strong></p>";
+  
+  html += "<div class='footer'>";
+  html += "ESP32 + BME280 - Auto-refresh ogni 5 secondi";
+  html += "</div>";
+  
+  html += "</div></body></html>";
+  
+  server.send(200, "text/html", html);
+}
+
+void setupWebServer() {
+  server.on("/", handleRoot);
+  server.begin();
+  Serial.println("[WEB] Server avviato su http://192.168.1.101");
+}
+
+// ================== SETUP ==================
+
+void setup() {
+  Serial.begin(115200);
+  delay(2000);
+  
+  Serial.println("\n========================================");
+  Serial.println("  ESP32 Stazione Meteo BME280");
+  Serial.println("========================================\n");
+  
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Serial.println("[SETUP] I2C inizializzato");
+  
+  // Prova prima 0x76, poi 0x77
+  if (!bme.begin(BME280_ADDRESS)) {
+    Serial.print("[SETUP] BME280 non trovato a 0x");
+    Serial.println(BME280_ADDRESS, HEX);
+    Serial.println("[SETUP] Provo indirizzo alternativo 0x77...");
+    
+    if (!bme.begin(0x77)) {
+      Serial.println("[SETUP] ❌ BME280 NON trovato!");
+      while (1) delay(1000);
+    } else {
+      Serial.println("[SETUP] ✅ BME280 OK @ 0x77");
+    }
+  } else {
+    Serial.print("[SETUP] ✅ BME280 OK @ 0x");
+    Serial.println(BME280_ADDRESS, HEX);
+  }
+  
+  // Configurazione BME280
+  bme.setSampling(Adafruit_BME280::MODE_NORMAL,
+                  Adafruit_BME280::SAMPLING_X2,  // temperatura
+                  Adafruit_BME280::SAMPLING_X16, // pressione
+                  Adafruit_BME280::SAMPLING_X1,  // umidità
+                  Adafruit_BME280::FILTER_X16,
+                  Adafruit_BME280::STANDBY_MS_500);
+  
+  Serial.println("[SETUP] Connessione WiFi...");
+  WiFi.mode(WIFI_STA);
+  if (!WiFi.config(local_IP, gateway, subnet, dns)) {
+    Serial.println("[SETUP] ⚠️  IP statico fallito");
+  }
+  WiFi.begin(ssid, password);
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  Serial.println();
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("[SETUP] ✅ WiFi → ");
+    Serial.println(WiFi.localIP());
+    
+    Serial.println("[SETUP] Sincronizzazione NTP...");
+    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+    
+    struct tm timeinfo;
+    for (int i = 0; i < 20; i++) {
+      time_t now = time(nullptr);
+      if (now > 10) {
+        localtime_r(&now, &timeinfo);
+        if (timeinfo.tm_year + 1900 >= 2020) {
+          ntpSynced = true;
+          Serial.printf("[SETUP] ✅ NTP sincronizzato: %04d-%02d-%02d %02d:%02d:%02d\n",
+                        timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                        timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+          break;
+        }
+      }
+      delay(500);
+    }
+    
+    if (!ntpSynced) {
+      Serial.println("[SETUP] ⚠️  NTP NON sincronizzato");
+    }
+  }
+  
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.end();
+  Serial.println("[SETUP] ✅ NVS pronta");
+  
+  setupWebServer();
+  
+  Serial.println("\n[SETUP] ✅ Inizializzazione completata!");
+  Serial.println("========================================\n");
+  
+  lastSampleMs = millis();
+}
+
+// ================== LOOP ==================
+
+void loop() {
+  server.handleClient();
+  
+  if (WiFi.status() != WL_CONNECTED) {
+    static unsigned long lastReconnect = 0;
+    if (millis() - lastReconnect > 10000) {
+      lastReconnect = millis();
+      WiFi.disconnect();
+      WiFi.begin(ssid, password);
+    }
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    flushQueue();
+  }
+  
+  unsigned long now = millis();
+  if (now - lastSampleMs >= SAMPLE_INTERVAL_MS) {
+    lastSampleMs = now;
+    
+    float temp, hum, press, tempCPU;
+    bool bmeOk = readBME280(temp, hum, press);
+    tempCPU = readCPUTemperature();
+    
+    if (bmeOk) {
+      lastTemp = temp;
+      lastHum = hum;
+      lastPress = press;
+      lastTempCPU = tempCPU;
+      
+      sumTemp += temp;
+      sumHum += hum;
+      sumPress += press;
+      sumTempCPU += tempCPU;
+      sampleCount++;
+      
+      Serial.print("[LOOP] Sample #");
+      Serial.print(sampleCount);
+      Serial.print("/");
+      Serial.print(NUM_SAMPLES_PER_WINDOW);
+      Serial.print(" | T=");
+      Serial.print(temp, 2);
+      Serial.print("°C H=");
+      Serial.print(hum, 2);
+      Serial.print("% P=");
+      Serial.print(press, 2);
+      Serial.println(" hPa");
+    } else {
+      Serial.println("[LOOP] ❌ Lettura BME280 fallita");
+    }
+    
+    if (sampleCount >= NUM_SAMPLES_PER_WINDOW) {
+      Serial.println("\n[LOOP] *** FINE FINESTRA 5 MIN ***");
+      
+      if (sampleCount > 0) {
+        float avgTemp = sumTemp / sampleCount;
+        float avgHum = sumHum / sampleCount;
+        float avgPress = sumPress / sampleCount;
+        float avgTempCPU = sumTempCPU / sampleCount;
+        
+        Serial.println("[LOOP] Medie:");
+        Serial.printf("  T=%.2f°C H=%.2f%% P=%.2fhPa CPU=%.2f°C\n",
+                      avgTemp, avgHum, avgPress, avgTempCPU);
+        
+        struct tm tinfo;
+        if (getCurrentTime(tinfo)) {
+          roundTo5MinutesDown(tinfo);
+          String iso = makeIsoTimestamp(tinfo);
+          
+          Serial.print("[LOOP] Timestamp: ");
+          Serial.println(iso);
+          
+          if (WiFi.status() == WL_CONNECTED) {
+            flushQueue();
+          }
+          
+          bool sent = false;
+          if (WiFi.status() == WL_CONNECTED && iso.length() > 0) {
+            Serial.println("[LOOP] Invio a ThingSpeak...");
+            sent = sendToThingSpeak(iso, avgTemp, avgHum, avgPress, avgTempCPU);
+          }
+          
+          if (!sent) {
+            String rec = makePackedRecord(tinfo, avgTemp, avgHum, avgPress, avgTempCPU);
+            appendToQueue(rec);
+            Serial.println("[LOOP] ❌ Accodato in NVS");
+          } else {
+            Serial.println("[LOOP] ✅ Inviato OK");
+          }
+        } else {
+          Serial.println("[LOOP] ⚠️  NTP non sincronizzato, accodo");
+          struct tm dummy = {0};
+          String rec = makePackedRecord(dummy, avgTemp, avgHum, avgPress, avgTempCPU);
+          appendToQueue(rec);
+        }
+      }
+      
+      sumTemp = 0.0;
+      sumHum = 0.0;
+      sumPress = 0.0;
+      sumTempCPU = 0.0;
+      sampleCount = 0;
+      Serial.println();
+    }
+  }
+  
+  delay(10);
+}
