@@ -50,10 +50,10 @@ body {
   min-height: 100vh;
 }
 
-/* TOP BAR DESKTOP (5 colonne) */
+/* TOP BAR DESKTOP (6 colonne: aggiunta Percepita) */
 .top-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   min-height: 70px;
 }
@@ -102,6 +102,7 @@ body {
 .tile-clock    {}
 .tile-temp-ext {}
 .tile-hum-ext  {}
+.tile-feels    {}
 
 /* GRIGLIA CENTRALE 2x2 DESKTOP */
 .center-grid {
@@ -407,6 +408,7 @@ body {
   .top-row {
     min-height: 38px;
     gap: 3px;
+    grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
   }
 
   .top-tile {
@@ -560,28 +562,26 @@ body {
     gap: 8px !important;
   }
 
-  /* TOPBAR: 3 righe tipo mobile */
+  /* TOPBAR: aggiunta tile feels */
   .top-row {
     display: grid !important;
     grid-template-columns: 1fr 1fr !important;
-    grid-template-rows: auto auto auto !important;
+    grid-template-rows: auto auto auto auto !important;
     grid-template-areas:
       "clock clock"
       "press temp-int"
-      "hum-ext temp-ext";
+      "hum-ext temp-ext"
+      "feels feels";
     gap: 6px !important;
     min-height: auto !important;
   }
 
-  .tile-clock {
-    grid-area: clock;
-    text-align: center;
-  }
-
-  .tile-press    { grid-area: press; }
+  .tile-clock { grid-area: clock; text-align: center; }
+  .tile-press { grid-area: press; }
   .tile-temp-int { grid-area: temp-int; }
-  .tile-hum-ext  { grid-area: hum-ext; }
+  .tile-hum-ext { grid-area: hum-ext; }
   .tile-temp-ext { grid-area: temp-ext; }
+  .tile-feels { grid-area: feels; }
 
   .top-tile {
     padding: 6px 8px !important;
@@ -595,7 +595,6 @@ body {
     font-size: 10px !important;
   }
 
-  /* QUADRANTI: colonna con scroll, pannelli auto */
   .center-grid {
     display: flex !important;
     flex-direction: column !important;
@@ -608,7 +607,6 @@ body {
     padding: 8px 10px !important;
   }
 
-  /* grafici alti, non schiacciati */
   .chart-kiosk {
     flex: 0 0 260px !important;
     height: 260px !important;
@@ -624,7 +622,6 @@ body {
     padding: 8px 0 !important;
   }
 
-  /* META + FOOTER multiriga */
   .meta-row {
     display: grid !important;
     grid-template-columns: 1fr !important;
@@ -714,6 +711,15 @@ body {
           <span class="top-label-unit">EXT</span>
         </div>
         <div class="top-value" id="stat-hum-ext">-- %</div>
+      </div>
+
+      <!-- NUOVO TILE: TEMPERATURA PERCEPITA (EXT) -->
+      <div class="top-tile tile-feels">
+        <div class="top-label-row">
+          <span>Percepita</span>
+          <span class="top-label-unit">EXT</span>
+        </div>
+        <div class="top-value" id="stat-feels">-- °C</div>
       </div>
     </div>
 
@@ -826,5 +832,82 @@ body {
   </div>
 
   <script src="main.js"></script>
+
+  <!-- Calcolo TEMPERATURA PERCEPITA (EXT) senza toccare main.js -->
+  <script>
+    function parseNumberFromText(txt) {
+      if (!txt) return NaN;
+      const m = String(txt).replace(",", ".").match(/-?\d+(\.\d+)?/);
+      return m ? Number(m[0]) : NaN;
+    }
+
+    function clamp(n, min, max) { return Math.min(max, Math.max(min, n)); }
+
+    // Heat Index (NOAA) - ritorna °C
+    function heatIndexC(tempC, rh) {
+      const T = tempC * 9/5 + 32; // F
+      const R = rh;
+
+      const HI =
+        -42.379 +
+        2.04901523 * T +
+        10.14333127 * R +
+        -0.22475541 * T * R +
+        -0.00683783 * T * T +
+        -0.05481717 * R * R +
+        0.00122874 * T * T * R +
+        0.00085282 * T * R * R +
+        -0.00000199 * T * T * R * R;
+
+      return (HI - 32) * 5/9;
+    }
+
+    // “Percepita” pratica:
+    // - se T >= 20°C e UR >= 30%: usa Heat Index
+    // - altrimenti (senza vento): uguale alla temperatura reale
+    function feelsLikeC(tempC, rh) {
+      if (tempC >= 20 && rh >= 30) return heatIndexC(tempC, rh);
+      return tempC;
+    }
+
+    function updateFeelsLike() {
+      const elT = document.getElementById("stat-temp-ext");
+      const elH = document.getElementById("stat-hum-ext");
+      const elF = document.getElementById("stat-feels");
+      if (!elT || !elH || !elF) return;
+
+      const t = parseNumberFromText(elT.textContent);
+      const h = parseNumberFromText(elH.textContent);
+
+      if (!Number.isFinite(t) || !Number.isFinite(h)) {
+        elF.textContent = "-- °C";
+        return;
+      }
+
+      const fl = feelsLikeC(t, clamp(h, 0, 100));
+
+      if (!Number.isFinite(fl) || fl < -50 || fl > 80) {
+        elF.textContent = "-- °C";
+        return;
+      }
+
+      elF.textContent = fl.toFixed(1) + " °C";
+    }
+
+    // aggiornamento robusto
+    setInterval(updateFeelsLike, 2000);
+
+    // aggiorna anche appena cambia temp/umidità
+    const obsCfg = { childList: true, characterData: true, subtree: true };
+    const obs = new MutationObserver(updateFeelsLike);
+
+    window.addEventListener("DOMContentLoaded", () => {
+      const elT = document.getElementById("stat-temp-ext");
+      const elH = document.getElementById("stat-hum-ext");
+      if (elT) obs.observe(elT, obsCfg);
+      if (elH) obs.observe(elH, obsCfg);
+      updateFeelsLike();
+    });
+  </script>
 </body>
 </html>
