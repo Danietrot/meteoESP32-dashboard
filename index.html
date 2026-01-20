@@ -30,35 +30,30 @@
   --danger: #ff5c5c;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   background: radial-gradient(circle at top, #20284a 0, #05070d 50%);
   color: var(--text-main);
-  /* permetti scroll verticale in tutte le modalità “grandi” */
   min-height: 100vh;
   overflow-x: hidden;
   overflow-y: auto;
 }
-
 
 .kiosk-root {
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 8px 12px;
-  /* niente height fissa: così su mobile può scrollare */
   min-height: 100vh;
 }
 
-/* TOP BAR DESKTOP (4 colonne) */
+/* TOP BAR DESKTOP (5 colonne) */
 .top-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   min-height: 70px;
 }
@@ -97,9 +92,7 @@ body {
   line-height: 1.1;
 }
 
-.top-timer {
-  text-align: center;
-}
+.top-timer { text-align: center; }
 
 /* classi per grid-area mobile */
 .tile-press    {}
@@ -107,6 +100,7 @@ body {
 .tile-clock    {}
 .tile-temp-ext {}
 .tile-hum-ext  {}
+.tile-feels    {}
 
 /* GRIGLIA CENTRALE 2x2 DESKTOP */
 .center-grid {
@@ -140,9 +134,7 @@ body {
   margin-bottom: 4px;
 }
 
-.panel-title {
-  font-weight: 600;
-}
+.panel-title { font-weight: 600; }
 
 .panel-subtitle {
   font-size: 11px;
@@ -179,9 +171,7 @@ body {
   font-size: 32px;
 }
 
-.forecast-text-main {
-  font-weight: 600;
-}
+.forecast-text-main { font-weight: 600; }
 
 .sun-debug {
   display: flex;
@@ -288,9 +278,7 @@ body {
   filter: drop-shadow(0 0 12px rgba(255, 200, 0, 0.9));
 }
 
-.sun-indicator::before {
-  content: "☀️";  /* Emoji sole */
-}
+.sun-indicator::before { content: "☀️"; }
 
 /* ================================
    LUNA 4 - GRIGIO CHIARO CON CRATERI
@@ -300,7 +288,6 @@ body {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  /* Grigio medio-chiaro */
   background: 
     radial-gradient(circle at 38% 32%, 
       #ececf2 0%,
@@ -317,24 +304,18 @@ body {
     inset -3px -3px 6px rgba(0, 0, 0, 0.12);
 }
 
-/* Crateri ben visibili */
 .moon-indicator::before {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: 50%;
   background-image: 
-    /* Cratere Tycho (grande, alto) */
     radial-gradient(circle 3px at 40% 22%, rgba(140, 140, 160, 0.45) 30%, transparent 70%),
-    /* Mare Tranquillitatis (macchia scura centro) */
     radial-gradient(ellipse 8px 6px at 45% 55%, rgba(155, 155, 175, 0.28) 40%, transparent 80%),
-    /* Cratere Copernicus (medio, sx) */
     radial-gradient(circle 4px at 28% 45%, rgba(145, 145, 165, 0.38) 35%, transparent 75%),
-    /* Cratere Plato (piccolo, alto-dx) */
     radial-gradient(circle 2.5px at 65% 30%, rgba(150, 150, 170, 0.35) 40%, transparent 80%);
 }
 
-/* Micro-crateri */
 .moon-indicator::after {
   content: "";
   position: absolute;
@@ -399,9 +380,7 @@ body {
   min-width: 0;
 }
 
-.footer-title {
-  font-weight: 600;
-}
+.footer-title { font-weight: 600; }
 
 .status-line {
   color: var(--text-soft);
@@ -475,6 +454,7 @@ body {
    ================================ */
 @media (min-width: 700px) and (max-width: 900px) 
        and (max-height: 600px) and (orientation: landscape) {
+
   body {
     overflow: hidden;
     height: 480px;
@@ -489,6 +469,7 @@ body {
   .top-row {
     min-height: 38px;
     gap: 3px;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
   }
 
   .top-tile {
@@ -515,7 +496,6 @@ body {
     opacity: 0.8;
   }
 
-  /* VALORI GRANDI ma un po' meno */
   .top-value {
     font-size: 28px !important;
     font-weight: 700;
@@ -523,7 +503,6 @@ body {
     padding-top: 12px;
   }
 
-  /* OROLOGIO - centrato verticalmente */
   .tile-clock {
     display: flex !important;
     flex-direction: column !important;
@@ -537,7 +516,6 @@ body {
     margin-bottom: 2px;
   }
 
-  /* "ORA LOCALE" centrata sotto */
   .tile-clock .top-label-row {
     position: static !important;
     text-align: center;
@@ -551,7 +529,6 @@ body {
     opacity: 0.8;
   }
 
-  /* Unità di misura PICCOLE (hPa, °C, %) */
   .unit-small {
     font-size: 14px !important;
     font-weight: 400;
@@ -564,26 +541,19 @@ body {
     gap: 3px;
   }
 
-  .panel {
-    padding: 3px 4px;
-  }
+  .panel { padding: 3px 4px; }
 
   .panel-header {
     font-size: 9px;
     margin-bottom: 1px;
   }
 
-  .panel-subtitle {
-    font-size: 8px;
-  }
-
-  .panel-title {
-    font-size: 9px;
-  }
+  .panel-subtitle { font-size: 8px; }
+  .panel-title { font-size: 9px; }
 
   .sun-content {
     display: grid !important;
-    grid-template-columns: 2fr 1fr !important;  /* Previsioni 2/3, Luna 1/3 */
+    grid-template-columns: 2fr 1fr !important;
     grid-template-rows: auto auto !important;
     grid-template-areas:
       "forecast moon"
@@ -592,12 +562,8 @@ body {
     padding: 4px !important;
   }
 
-  /* NASCONDE le scritte tecniche (ΔP 3h, Umidità, Soglie) */
-  .sun-debug {
-    display: none !important;
-  }
+  .sun-debug { display: none !important; }
 
-  /* PREVISIONI - top left */
   .forecast-row {
     grid-area: forecast !important;
     display: flex !important;
@@ -616,12 +582,8 @@ body {
     line-height: 1.3 !important;
   }
 
-  /* CONTENITORE ASTRO - gestisce moon e sun-arc */
-  .astro-info {
-    display: contents !important;  /* Fa diventare i figli diretti della griglia */
-  }
+  .astro-info { display: contents !important; }
 
-  /* LUNA - top right */
   .moon-row {
     grid-area: moon !important;
     display: flex !important;
@@ -635,33 +597,22 @@ body {
     margin: 0 !important;
   }
 
-  .moon-icon {
-    font-size: 24px !important;
-  }
+  .moon-icon { font-size: 24px !important; }
 
-  .moon-phase-name {
-    font-size: 12px !important;
-    font-weight: 600 !important;
-  }
-
+  .moon-phase-name,
   .moon-illumination {
     font-size: 12px !important;
     font-weight: 600 !important;
   }
 
-  /* ARCOBALENO SOLE - bottom full width */
-  .sun-arc-container {
-    grid-area: sun-arc !important;
-  }
+  .sun-arc-container { grid-area: sun-arc !important; }
 
   .sun-arc-wrapper {
     height: 60px !important;
     margin: 0 !important;
   }
 
-  .sun-arc {
-    height: 55px;
-  }
+  .sun-arc { height: 55px; }
 
   .celestial-times {
     font-size: 9px;
@@ -669,10 +620,7 @@ body {
     margin-top: 0;
   }
 
-  .meta-row {
-    font-size: 8px;
-    margin: 0 2px 0;
-  }
+  .meta-row { font-size: 8px; margin: 0 2px 0; }
 
   .footer-bar {
     min-height: 20px;
@@ -681,17 +629,9 @@ body {
     margin-top: 0;
   }
 
-  .footer-left {
-    gap: 1px;
-  }
-
-  .footer-title {
-    font-size: 9px;
-  }
-
-  .status-line {
-    font-size: 8px;
-  }
+  .footer-left { gap: 1px; }
+  .footer-title { font-size: 9px; }
+  .status-line { font-size: 8px; }
 
   .btn-range {
     padding: 3px 8px;
@@ -704,9 +644,7 @@ body {
     font-size: 10px;
   }
 
-  .chart-kiosk {
-    font-size: 10px;
-  }
+  .chart-kiosk { font-size: 10px; }
 }
 
 /* ================================
@@ -725,41 +663,29 @@ body {
     gap: 8px !important;
   }
 
-  /* TOPBAR: 3 righe tipo mobile */
   .top-row {
     display: grid !important;
     grid-template-columns: 1fr 1fr !important;
-    grid-template-rows: auto auto auto !important;
+    grid-template-rows: auto auto auto auto !important;
     grid-template-areas:
       "clock clock"
       "press temp-ext"
-      "hum-ext hum-ext";
+      "hum-ext feels"
+      "feels feels";
     gap: 6px !important;
     min-height: auto !important;
   }
 
-  .tile-clock {
-    grid-area: clock;
-    text-align: center;
-  }
-
-  .tile-press    { grid-area: press; }
+  .tile-clock { grid-area: clock; text-align: center; }
+  .tile-press { grid-area: press; }
   .tile-temp-ext { grid-area: temp-ext; }
-  .tile-hum-ext  { grid-area: hum-ext; }
+  .tile-hum-ext { grid-area: hum-ext; }
+  .tile-feels { grid-area: feels; }
 
-  .top-tile {
-    padding: 6px 8px !important;
-  }
+  .top-tile { padding: 6px 8px !important; }
+  .top-value { font-size: 20px !important; }
+  .top-label-row { font-size: 10px !important; }
 
-  .top-value {
-    font-size: 20px !important;
-  }
-
-  .top-label-row {
-    font-size: 10px !important;
-  }
-
-  /* QUADRANTI: colonna con scroll, pannelli auto */
   .center-grid {
     display: flex !important;
     flex-direction: column !important;
@@ -767,29 +693,16 @@ body {
     flex: 0 0 auto !important;
   }
 
-  /* RIORDINO PANNELLI SU MOBILE */
-  .panel-meteo {
-    order: 1 !important; /* Meteo + sole/luna per primo */
-  }
-  
-  .panel-press {
-    order: 2 !important; /* Pressione secondo */
-  }
-  
-  .panel-temp {
-    order: 3 !important; /* Temperatura terzo */
-  }
-  
-  .panel-hum {
-    order: 4 !important; /* Umidità quarto */
-  }
+  .panel-meteo { order: 1 !important; }
+  .panel-press { order: 2 !important; }
+  .panel-temp { order: 3 !important; }
+  .panel-hum { order: 4 !important; }
 
   .panel {
     flex: 0 0 auto !important;
     padding: 8px 10px !important;
   }
 
-  /* grafici alti, non schiacciati */
   .chart-kiosk {
     flex: 0 0 260px !important;
     height: 260px !important;
@@ -805,7 +718,6 @@ body {
     padding: 8px 0 !important;
   }
 
-  /* META + FOOTER multiriga */
   .meta-row {
     display: grid !important;
     grid-template-columns: 1fr !important;
@@ -822,10 +734,7 @@ body {
     min-height: auto !important;
   }
 
-  .footer-left {
-    order: 1 !important;
-  }
-
+  .footer-left { order: 1 !important; }
   .footer-center {
     order: 2 !important;
     display: flex !important;
@@ -833,7 +742,6 @@ body {
     justify-content: center !important;
     gap: 4px !important;
   }
-
   .footer-right {
     order: 3 !important;
     display: flex !important;
@@ -887,6 +795,15 @@ body {
           <span class="top-label-unit">ESP32</span>
         </div>
         <div class="top-value" id="stat-hum-ext">-- %</div>
+      </div>
+
+      <!-- NUOVO TILE: TEMPERATURA PERCEPITA -->
+      <div class="top-tile tile-feels">
+        <div class="top-label-row">
+          <span>Percepita</span>
+          <span class="top-label-unit">ESP32</span>
+        </div>
+        <div class="top-value" id="stat-feels">-- °C</div>
       </div>
     </div>
 
@@ -998,17 +915,93 @@ body {
         <button class="btn-range" data-range="1y">1y</button>
       </div>
       <div class="footer-right">
-		<button class="btn-small" type="button" onclick="window.location.href='confronto.html'">
-		Confronto ➜
-		</button>
-		<button class="btn-small" type="button" onclick="window.location.href='dati.html'">
-		Dati ➜
-		</button>
-		</div>
-
+        <button class="btn-small" type="button" onclick="window.location.href='confronto.html'">
+          Confronto ➜
+        </button>
+        <button class="btn-small" type="button" onclick="window.location.href='dati.html'">
+          Dati ➜
+        </button>
+      </div>
     </div>
   </div>
 
   <script src="main.js"></script>
+
+  <!-- Calcolo TEMPERATURA PERCEPITA senza toccare main.js -->
+  <script>
+    function parseNumberFromText(txt) {
+      if (!txt) return NaN;
+      // prende il primo numero (accetta virgola o punto)
+      const m = String(txt).replace(",", ".").match(/-?\d+(\.\d+)?/);
+      return m ? Number(m[0]) : NaN;
+    }
+
+    function clamp(n, min, max) { return Math.min(max, Math.max(min, n)); }
+
+    // Heat Index (NOAA) - ritorna °C
+    function heatIndexC(tempC, rh) {
+      const T = tempC * 9/5 + 32; // F
+      const R = rh;
+
+      const HI =
+        -42.379 +
+        2.04901523 * T +
+        10.14333127 * R +
+        -0.22475541 * T * R +
+        -0.00683783 * T * T +
+        -0.05481717 * R * R +
+        0.00122874 * T * T * R +
+        0.00085282 * T * R * R +
+        -0.00000199 * T * T * R * R;
+
+      return (HI - 32) * 5/9;
+    }
+
+    // “Percepita” pratica:
+    // - se T >= 20°C e UR >= 30%: usa Heat Index
+    // - altrimenti (senza vento): uguale alla temperatura reale
+    function feelsLikeC(tempC, rh) {
+      if (tempC >= 20 && rh >= 30) return heatIndexC(tempC, rh);
+      return tempC;
+    }
+
+    function updateFeelsLike() {
+      const elT = document.getElementById("stat-temp-ext");
+      const elH = document.getElementById("stat-hum-ext");
+      const elF = document.getElementById("stat-feels");
+      if (!elT || !elH || !elF) return;
+
+      const t = parseNumberFromText(elT.textContent);
+      const h = parseNumberFromText(elH.textContent);
+
+      if (!Number.isFinite(t) || !Number.isFinite(h)) {
+        elF.textContent = "-- °C";
+        return;
+      }
+
+      const fl = feelsLikeC(t, clamp(h, 0, 100));
+      // se per qualche motivo esce un numero assurdo, fallback
+      if (!Number.isFinite(fl) || fl < -50 || fl > 80) {
+        elF.textContent = "-- °C";
+        return;
+      }
+
+      elF.textContent = fl.toFixed(1) + " °C";
+    }
+
+    // aggiorna ogni 2s (robusto e semplice)
+    setInterval(updateFeelsLike, 2000);
+
+    // aggiorna anche appena cambia temp/umidità
+    const obsCfg = { childList: true, characterData: true, subtree: true };
+    const obs = new MutationObserver(updateFeelsLike);
+    window.addEventListener("DOMContentLoaded", () => {
+      const elT = document.getElementById("stat-temp-ext");
+      const elH = document.getElementById("stat-hum-ext");
+      if (elT) obs.observe(elT, obsCfg);
+      if (elH) obs.observe(elH, obsCfg);
+      updateFeelsLike();
+    });
+  </script>
 </body>
 </html>
